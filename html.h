@@ -2,7 +2,7 @@
 #define HTML_H
 #include <stddef.h>
 
-enum { MAX_LINKS = 64, MAX_HREF = 256, MAX_TEXT = 96, MAX_IMG = 8, IMG_W = 48, IMG_H = 18 };
+enum { MAX_LINKS = 64, MAX_HREF = 2048, MAX_TEXT = 96, MAX_IMG = 8, IMG_W = 48, IMG_H = 18 };
 
 typedef struct {
     char href[MAX_HREF];
