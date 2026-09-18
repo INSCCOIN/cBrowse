@@ -111,7 +111,7 @@ static void grab_attr(const char *tag, const char *name, char *out, size_t n)
 
 void url_join(char *dst, size_t n, const char *base, const char *rel)
 {
-    char tmp[512], *cut;
+    char tmp[MAX_HREF], *cut;
     if (!rel || !rel[0]) {
         snprintf(dst, n, "%s", base ? base : "");
         return;
@@ -130,7 +130,7 @@ void url_join(char *dst, size_t n, const char *base, const char *rel)
     }
     snprintf(tmp, sizeof tmp, "%s", base);
     cut = strstr(tmp, "://");
-    cut = cut ? cut + 3 : tmp;
+    cut = cut ? cut + 3 : tmp; /* host */
     if (rel[0] == '/') {
         char *slash = strchr(cut, '/');
         if (slash)
@@ -138,10 +138,17 @@ void url_join(char *dst, size_t n, const char *base, const char *rel)
         snprintf(dst, n, "%s%s", tmp, rel);
         return;
     }
-    cut = strrchr(tmp, '/');
-    if (cut && cut > strstr(tmp, "://") + 2)
-        cut[1] = 0;
-    snprintf(dst, n, "%s%s", tmp, rel);
+    {
+        char *path = strchr(cut, '/');
+        if (!path) {
+            snprintf(dst, n, "%s/%s", tmp, rel);
+            return;
+        }
+        cut = strrchr(path, '/');
+        if (cut)
+            cut[1] = 0;
+        snprintf(dst, n, "%s%s", tmp, rel);
+    }
 }
 
 int html_parse(const char *html, Page *out)
