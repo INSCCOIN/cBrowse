@@ -12,6 +12,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/select.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -312,11 +313,42 @@ static void push_hist(const char *u)
 
 static int fetch(const char *u, const char *path, int tmax, int maxb)
 {
-    char cmd[800];
-    snprintf(cmd, sizeof cmd,
-             "curl -L --max-time %d -sS -A 'cBrowse/0.1' --max-filesize %d -o '%s' '%s' 2>/dev/null",
-             tmax, maxb, path, u);
-    return system(cmd) == 0 ? 0 : -1;
+    char tbuf[16], mbuf[16];
+    pid_t pid;
+    int st;
+    snprintf(tbuf, sizeof tbuf, "%d", tmax);
+    snprintf(mbuf, sizeof mbuf, "%d", maxb);
+    pid = fork();
+    if (pid < 0)
+        return -1;
+    if (pid == 0) {
+        int err = open("/tmp/cbrowse.curl", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (err >= 0) {
+            dup2(err, 2);
+            close(err);
+        }
+        execlp("curl", "curl", "-L", "--max-time", tbuf, "-sS", "-A", "cBrowse/0.1",
+               "--max-filesize", mbuf, "-o", path, "--", u, (char *)NULL);
+        _exit(127);
+    }
+    if (waitpid(pid, &st, 0) < 0)
+        return -1;
+    if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+        char err[200] = "";
+        FILE *f = fopen("/tmp/cbrowse.curl", "r");
+        if (f) {
+            if (!fgets(err, sizeof err, f))
+                err[0] = 0;
+            fclose(f);
+        }
+        {
+            char l[280];
+            snprintf(l, sizeof l, "curl exit %d %s", WIFEXITED(st) ? WEXITSTATUS(st) : -1, err);
+            log_line(l);
+        }
+        return -1;
+    }
+    return 0;
 }
 
 static void load_image(void)
