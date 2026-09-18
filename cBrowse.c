@@ -1,6 +1,7 @@
 /* cBrowse — framebuffer browser. Not a TTY app. */
 #define _GNU_SOURCE
 #include "html.h"
+#include "mouse.h"
 #include <fcntl.h>
 #include <linux/fb.h>
 #include <linux/input.h>
@@ -23,7 +24,7 @@ static unsigned char *map;
 static size_t maplen;
 static unsigned W, H, BPP, LINE;
 static struct termios oldt;
-static int raw_on, run = 1, off, img_ok, img_w, img_h;
+static int raw_on, run = 1, off, img_ok, img_w, img_h, mx, my;
 static char url[512] = "https://example.com";
 static char hist[HIST][512];
 static int hist_i = -1;
@@ -399,7 +400,17 @@ static void draw(void)
     }
     fill(4, (int)H - 14, (int)W - 8, 12, C_FACE);
     text(8, (int)H - 12, msg, C_BLACK);
+    {
+        int cx = mx, cy = my;
+        fill(cx, cy, 1, 12, C_BLACK);
+        fill(cx, cy, 8, 1, C_BLACK);
+        px(cx + 1, cy + 1, C_WHITE);
+        px(cx + 2, cy + 2, C_WHITE);
+        px(cx + 3, cy + 3, C_WHITE);
+    }
 }
+
+static void type_url(void);
 
 static void do_id(int id)
 {
@@ -409,7 +420,9 @@ static void do_id(int id)
         hist_i--;
         load(hist[hist_i]);
         hist_i--;
-    } else if (id == -6)
+    } else if (id == -2)
+        type_url();
+    else if (id == -6)
         run = 0;
     else if (id == -7)
         load(url);
@@ -470,17 +483,35 @@ int main(int argc, char **argv)
     if (argc > 1)
         snprintf(url, sizeof url, "%s", argv[1]);
     raw(1);
+    mouse_open((int)W, (int)H);
+    mx = (int)W / 2;
+    my = (int)H / 2;
     load(url);
     draw();
     while (run) {
         unsigned char ch = 0;
         fd_set rf;
-        struct timeval tv = {0, 80000};
+        struct timeval tv = {0, 40000};
+        int mfd, click = 0, dirty = 0;
         FD_ZERO(&rf);
         FD_SET(0, &rf);
-        if (select(1, &rf, NULL, NULL, &tv) > 0)
-            read(0, &ch, 1);
-        if (!ch)
+        mouse_add_fds(&rf);
+        mfd = mouse_max_fd();
+        if (mfd < 0)
+            mfd = 0;
+        if (select(mfd + 1, &rf, NULL, NULL, &tv) > 0) {
+            if (FD_ISSET(0, &rf))
+                read(0, &ch, 1);
+        }
+        if (mouse_poll(&mx, &my, &click))
+            dirty = 1;
+        if (click) {
+            int id = hit_at(mx, my);
+            if (id)
+                do_id(id);
+            dirty = 1;
+        }
+        if (!ch && !dirty)
             continue;
         if (ch == 'q')
             run = 0;
@@ -512,6 +543,7 @@ int main(int argc, char **argv)
             draw();
     }
     raw(0);
+    mouse_close();
     page_free(&page);
     munmap(map, maplen);
     close(fb);
