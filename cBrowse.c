@@ -18,6 +18,9 @@
 #define HIST 16
 #define IW 200
 #define IH 90
+#define LOGPATH "/home/cbrowse.log"
+#define CURW 11
+#define CURH 13
 
 static int fb = -1;
 static unsigned char *map;
@@ -25,6 +28,9 @@ static size_t maplen;
 static unsigned W, H, BPP, LINE;
 static struct termios oldt;
 static int raw_on, run = 1, off, img_ok, img_w, img_h, mx, my;
+static int cur_on, cur_x, cur_y;
+static uint16_t cur_save[CURH][CURW];
+static FILE *logf;
 static char url[512] = "https://example.com";
 static char hist[HIST][512];
 static int hist_i = -1;
@@ -50,6 +56,43 @@ static uint16_t rgb565(int r, int g, int b)
     return (uint16_t)(((r & 0xf8) << 8) | ((g & 0xfc) << 3) | (b >> 3));
 }
 
+static void log_line(const char *s)
+{
+    if (!logf)
+        return;
+    fprintf(logf, "%s\n", s);
+    fflush(logf);
+}
+
+static void log_init(void)
+{
+    unlink(LOGPATH);
+    logf = fopen(LOGPATH, "w");
+    log_line("cBrowse start");
+}
+
+static void log_close(void)
+{
+    if (!logf)
+        return;
+    log_line("cBrowse exit — log saved");
+    fclose(logf);
+    logf = NULL;
+}
+
+static uint16_t get_px(int x, int y)
+{
+    unsigned char *p;
+    if ((unsigned)x >= W || (unsigned)y >= H)
+        return 0;
+    p = map + (size_t)y * LINE + (size_t)x * (BPP / 8);
+    if (BPP == 16)
+        return ((uint16_t *)p)[0];
+    if (BPP == 32)
+        return rgb565(p[2], p[1], p[0]);
+    return 0;
+}
+
 static void px(int x, int y, uint16_t c)
 {
     unsigned char *p;
@@ -72,6 +115,52 @@ static void fill(int x, int y, int w, int h, uint16_t c)
     for (j = 0; j < h; j++)
         for (i = 0; i < w; i++)
             px(x + i, y + j, c);
+}
+
+static void cursor_hide(void)
+{
+    int x, y;
+    if (!cur_on)
+        return;
+    for (y = 0; y < CURH; y++)
+        for (x = 0; x < CURW; x++)
+            px(cur_x + x, cur_y + y, cur_save[y][x]);
+    cur_on = 0;
+}
+
+static void cursor_show(void)
+{
+    static const char spr[CURH][CURW + 1] = {
+        "X          ",
+        "XX         ",
+        "X.X        ",
+        "X..X       ",
+        "X...X      ",
+        "X....X     ",
+        "X.....X    ",
+        "X......X   ",
+        "X.....X    ",
+        "X..XX      ",
+        "X.X X      ",
+        "   X X     ",
+        "    X      ",
+    };
+    int x, y;
+    cursor_hide();
+    cur_x = mx;
+    cur_y = my;
+    for (y = 0; y < CURH; y++)
+        for (x = 0; x < CURW; x++)
+            cur_save[y][x] = get_px(cur_x + x, cur_y + y);
+    for (y = 0; y < CURH; y++)
+        for (x = 0; x < CURW; x++) {
+            char c = spr[y][x];
+            if (c == 'X')
+                px(cur_x + x, cur_y + y, C_BLACK);
+            else if (c == '.')
+                px(cur_x + x, cur_y + y, C_WHITE);
+        }
+    cur_on = 1;
 }
 
 static void hline(int x, int y, int w, uint16_t c)
@@ -277,8 +366,14 @@ static void load(const char *u)
     long sz;
     int i;
     snprintf(msg, sizeof msg, "Loading...");
+    {
+        char l[600];
+        snprintf(l, sizeof l, "GET %s", u);
+        log_line(l);
+    }
     if (fetch(u, path, 25, 2000000) != 0) {
         snprintf(msg, sizeof msg, "fetch failed");
+        log_line("fetch failed");
         return;
     }
     f = fopen(path, "rb");
@@ -313,6 +408,12 @@ static void load(const char *u)
     off = 0;
     load_image();
     snprintf(msg, sizeof msg, "%d links  %s", page.nlink, page.title[0] ? page.title : "");
+    {
+        char l[160];
+        snprintf(l, sizeof l, "ok links=%d img=%d title=%s", page.nlink, page.nimg,
+                 page.title[0] ? page.title : "-");
+        log_line(l);
+    }
 }
 
 static void follow(int n)
@@ -326,6 +427,7 @@ static void draw(void)
     int x0 = 4, y0 = 44, bw = (int)W - 8, bh = (int)H - 60;
     int row, col, skip;
     const char *s;
+    cursor_hide();
     nhit = 0;
     fill(0, 0, (int)W, (int)H, C_DESK);
     fill(2, 2, (int)W - 4, (int)H - 4, C_NAVY);
@@ -398,16 +500,10 @@ static void draw(void)
             col += 6;
         }
     }
-    fill(4, (int)H - 14, (int)W - 8, 12, C_FACE);
+    fill(4, (int)H - 16, (int)W - 8, 14, C_FACE);
+    hline(4, (int)H - 16, (int)W - 8, C_LIT);
     text(8, (int)H - 12, msg, C_BLACK);
-    {
-        int cx = mx, cy = my;
-        fill(cx, cy, 1, 12, C_BLACK);
-        fill(cx, cy, 8, 1, C_BLACK);
-        px(cx + 1, cy + 1, C_WHITE);
-        px(cx + 2, cy + 2, C_WHITE);
-        px(cx + 3, cy + 3, C_WHITE);
-    }
+    cursor_show();
 }
 
 static void type_url(void);
@@ -466,7 +562,10 @@ static void type_url(void)
 
 int main(int argc, char **argv)
 {
+    log_init();
     if (fb_open() < 0) {
+        log_line("fb0 open failed");
+        log_close();
         fprintf(stderr, "cBrowse needs /dev/fb0 (not a terminal UI)\n");
         return 1;
     }
@@ -503,10 +602,14 @@ int main(int argc, char **argv)
             if (FD_ISSET(0, &rf))
                 read(0, &ch, 1);
         }
-        if (mouse_poll(&mx, &my, &click))
-            dirty = 1;
+        if (mouse_poll(&mx, &my, &click)) {
+            cursor_show();
+        }
         if (click) {
             int id = hit_at(mx, my);
+            char l[80];
+            snprintf(l, sizeof l, "click %d,%d id=%d", mx, my, id);
+            log_line(l);
             if (id)
                 do_id(id);
             dirty = 1;
@@ -544,6 +647,7 @@ int main(int argc, char **argv)
     }
     raw(0);
     mouse_close();
+    log_close();
     page_free(&page);
     munmap(map, maplen);
     close(fb);
