@@ -2,8 +2,8 @@ CC ?= gcc
 CFLAGS ?= -O2 -Wall -Wextra
 PREFIX ?= /usr/local
 
-cBrowse: cBrowse.c html.c html.h
-	$(CC) $(CFLAGS) -o cBrowse cBrowse.c html.c -lm
+cBrowse: cBrowse.c html.c html.h mouse.c mouse.h
+	$(CC) $(CFLAGS) -o cBrowse cBrowse.c html.c mouse.c -lm
 
 install: cBrowse
 	install -d $(DESTDIR)$(PREFIX)/bin
